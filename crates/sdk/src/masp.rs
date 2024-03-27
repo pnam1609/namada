@@ -746,14 +746,15 @@ impl<U: ShieldedUtils + MaybeSend + MaybeSync> ShieldedContext<U> {
         let start_idx = start_query_height.or(start_idx);
         // Load all transactions accepted until this point
         // N.B. the cache is a hash map
+        let testa = self.fetch_shielded_transfers(
+            client,
+            logger,
+            start_idx,
+            last_query_height,
+        )
+        .await?;
         self.unscanned.extend(
-            self.fetch_shielded_transfers(
-                client,
-                logger,
-                start_idx,
-                last_query_height,
-            )
-            .await?,
+            testa,
         );
         // persist the cache in case of interruptions.
         let _ = self.save().await;
@@ -765,12 +766,14 @@ impl<U: ShieldedUtils + MaybeSend + MaybeSync> ShieldedContext<U> {
         &mut self,
         client: &C,
         logger: &impl ProgressLogger<IO>,
+        unscanned: Unscanned,
         _batch_size: u64,
     ) -> Result<(), Error> {
         let native_token = query_native_token(client).await?;
         let last_witnessed_tx = self.tx_note_map.keys().max().cloned();
+        print!("last_witnessed_tx {:?}",last_witnessed_tx);
 
-        let txs = logger.scan(self.unscanned.clone());
+        let txs = logger.scan(unscanned.clone());
         for (indexed_tx, (epoch, tx, stx)) in txs {
             if Some(indexed_tx) > last_witnessed_tx {
                 self.update_witness_map(indexed_tx, &stx)?;
