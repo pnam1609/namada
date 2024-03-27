@@ -10,6 +10,7 @@ use std::str::FromStr;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use borsh_ext::BorshSerializeExt;
+use futures::future::ok;
 use itertools::Either;
 use lazy_static::lazy_static;
 use masp_primitives::asset_type::AssetType;
@@ -696,6 +697,104 @@ impl<U: ShieldedUtils + MaybeSend + MaybeSync> ShieldedContext<U> {
             let witness = IncrementalWitness::<Node>::from_tree(&self.tree);
             self.witness_map.insert(note_pos, witness);
             note_pos += 1;
+        }
+        Ok(())
+    }
+
+    pub async fn fetch_transaction<C: Client + Sync, IO: Io>(
+        &mut self,
+        client: &C,
+        logger: &impl ProgressLogger<IO>,
+        start_query_height: Option<BlockHeight>,
+        last_query_height: Option<BlockHeight>,
+        _batch_size: u64,
+        sks: &[ExtendedSpendingKey],
+        fvks: &[ViewingKey],
+    ) -> Result<(), Error> {
+        // add new viewing keys
+        // Reload the state from file to get the last confirmed state and
+        // discard any speculative data, we cannot fetch on top of a
+        // speculative state
+        // Always reload the confirmed context or initialize a new one if not
+        // found
+        if self.load_confirmed().await.is_err() {
+            // Initialize a default context if we couldn't load a valid one
+            // from storage
+            *self = Self {
+                utils: std::mem::take(&mut self.utils),
+                ..Default::default()
+            };
+        }
+
+        for esk in sks {
+            let vk = to_viewing_key(esk).vk;
+            self.vk_heights.entry(vk).or_default();
+        }
+        for vk in fvks {
+            self.vk_heights.entry(*vk).or_default();
+        }
+        let _ = self.save().await;
+        // the latest block height which has been added to the witness Merkle
+        // tree
+        let Some(least_idx) = self.vk_heights.values().min().cloned() else {
+            return Ok(());
+        };
+        let last_witnessed_tx = self.tx_note_map.keys().max().cloned();
+        // get the bounds on the block heights to fetch
+        let start_idx =
+            std::cmp::min(last_witnessed_tx, least_idx).map(|ix| ix.height);
+        let start_idx = start_query_height.or(start_idx);
+        // Load all transactions accepted until this point
+        // N.B. the cache is a hash map
+        self.unscanned.extend(
+            self.fetch_shielded_transfers(
+                client,
+                logger,
+                start_idx,
+                last_query_height,
+            )
+            .await?,
+        );
+        // persist the cache in case of interruptions.
+        let _ = self.save().await;
+        Ok(())
+    }
+
+
+    pub async fn scan_transaction<C: Client + Sync, IO: Io>(
+        &mut self,
+        client: &C,
+        logger: &impl ProgressLogger<IO>,
+        _batch_size: u64,
+    ) -> Result<(), Error> {
+        let native_token = query_native_token(client).await?;
+        let last_witnessed_tx = self.tx_note_map.keys().max().cloned();
+
+        let txs = logger.scan(self.unscanned.clone());
+        for (indexed_tx, (epoch, tx, stx)) in txs {
+            if Some(indexed_tx) > last_witnessed_tx {
+                self.update_witness_map(indexed_tx, &stx)?;
+            }
+            let mut vk_heights = BTreeMap::new();
+            std::mem::swap(&mut vk_heights, &mut self.vk_heights);
+            for (vk, h) in vk_heights
+                .iter_mut()
+                .filter(|(_vk, h)| **h < Some(indexed_tx))
+            {
+                self.scan_tx(
+                    indexed_tx,
+                    epoch,
+                    &tx,
+                    &stx,
+                    vk,
+                    native_token.clone(),
+                )?;
+                *h = Some(indexed_tx);
+            }
+            // possibly remove unneeded elements from the cache.
+            self.unscanned.scanned(&indexed_tx);
+            std::mem::swap(&mut vk_heights, &mut self.vk_heights);
+            let _ = self.save().await;
         }
         Ok(())
     }
