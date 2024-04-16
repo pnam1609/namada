@@ -802,6 +802,17 @@ impl<U: ShieldedUtils + MaybeSend + MaybeSync> ShieldedContext<U> {
         Ok(())
     }
 
+    
+    pub async fn extend_unscan<C: Client + Sync, IO: Io>(
+        &mut self,
+        unscanned: Unscanned,
+        _batch_size: u64,
+    ) -> () {
+        self.unscanned.extend(
+            unscanned.txs
+        );
+    }
+    
     /// Fetch the current state of the multi-asset shielded pool into a
     /// ShieldedContext
     #[allow(clippy::too_many_arguments)]
