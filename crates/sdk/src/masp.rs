@@ -766,14 +766,12 @@ impl<U: ShieldedUtils + MaybeSend + MaybeSync> ShieldedContext<U> {
         &mut self,
         client: &C,
         logger: &impl ProgressLogger<IO>,
-        unscanned: Unscanned,
-        _batch_size: u64,
     ) -> Result<(), Error> {
         let native_token = query_native_token(client).await?;
         let last_witnessed_tx = self.tx_note_map.keys().max().cloned();
         print!("last_witnessed_tx {:?}",last_witnessed_tx);
 
-        let txs = logger.scan(unscanned.clone());
+        let txs = logger.scan(self.unscanned.clone());
         for (indexed_tx, (epoch, tx, stx)) in txs {
             if Some(indexed_tx) > last_witnessed_tx {
                 self.update_witness_map(indexed_tx, &stx)?;
@@ -806,7 +804,6 @@ impl<U: ShieldedUtils + MaybeSend + MaybeSync> ShieldedContext<U> {
     pub async fn extend_unscan<C: Client + Sync, IO: Io>(
         &mut self,
         unscanned: Unscanned,
-        _batch_size: u64,
     ) -> () {
         self.unscanned.extend(
             unscanned.txs
