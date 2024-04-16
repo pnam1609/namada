@@ -801,7 +801,7 @@ impl<U: ShieldedUtils + MaybeSend + MaybeSync> ShieldedContext<U> {
     }
 
     
-    pub async fn extend_unscan<C: Client + Sync, IO: Io>(
+    pub async fn extend_unscan(
         &mut self,
         unscanned: Unscanned,
     ) -> () {
