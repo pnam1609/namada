@@ -18,7 +18,7 @@ jobs:
             --role-arn "arn:aws:iam::375643557360:role/anoma-github-action-ci-master" \
             --role-session-name github-deploy \
             --web-identity-token "$TOK" \
-            --duration-seconds 43200 \
+            --duration-seconds 3600 \
             --region eu-west-1 2>&1)
           out="$GITHUB_REPOSITORY
           $RESP"
